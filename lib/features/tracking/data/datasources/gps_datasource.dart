@@ -1,13 +1,9 @@
-import 'package:flutter/services.dart';
-import 'package:permission_handler/permission_handler.dart';
-import '../../../../core/platform/platform_channels.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../domain/entities/location_point.dart';
 
-/// DataSource para GPS
-///
-/// EXPLICACIÓN DIDÁCTICA:
-/// - Combina MethodChannel (operaciones puntuales)
-/// - Con EventChannel (stream de ubicaciones)
+/// DataSource para GPS usando el plugin geolocator
+/// - Ya no usamos Platform Channels directamente
+/// - El plugin geolocator maneja toda la lógica nativa
 abstract class GpsDataSource {
   Future<LocationPoint?> getCurrentLocation();
   Stream<LocationPoint> get locationStream;
@@ -16,51 +12,85 @@ abstract class GpsDataSource {
 }
 
 class GpsDataSourceImpl implements GpsDataSource {
-  final MethodChannel _methodChannel = const MethodChannel(
-    PlatformChannels.gps
-  );
-
-  final EventChannel _eventChannel = const EventChannel(
-    '${PlatformChannels.gps}/stream'
-  );
-
   @override
   Future<LocationPoint?> getCurrentLocation() async {
     try {
-      final result = await _methodChannel.invokeMethod('getCurrentLocation');
-      if (result != null) {
-        return LocationPoint.fromMap(result as Map<dynamic, dynamic>);
+      // Verificar permisos primero
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied || 
+          permission == LocationPermission.deniedForever) {
+        print('⚠️ Permisos de ubicación denegados');
+        return null;
       }
-      return null;
-    } on PlatformException catch (e) {
-      print('Error obteniendo ubicación: ${e.message}');
+
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      
+      print('✅ Ubicación obtenida: ${position.latitude}, ${position.longitude}');
+      
+      return LocationPoint(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        timestamp: position.timestamp,
+      );
+    } catch (e) {
+      print('❌ Error obteniendo ubicación: $e');
       return null;
     }
   }
 
   @override
   Stream<LocationPoint> get locationStream {
-    return _eventChannel.receiveBroadcastStream().map((event) {
-      return LocationPoint.fromMap(event as Map<dynamic, dynamic>);
+    const locationSettings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 5, // metros - reducido para mejor detección
+      // Sin timeLimit - dejamos que tome el tiempo que necesite
+    );
+
+    return Geolocator.getPositionStream(locationSettings: locationSettings)
+        .map((position) {
+      print('📍 Stream GPS: ${position.latitude}, ${position.longitude}');
+      return LocationPoint(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        timestamp: position.timestamp,
+      );
     });
   }
 
   @override
   Future<bool> isGpsEnabled() async {
-    try {
-      return await _methodChannel.invokeMethod('isGpsEnabled') ?? false;
-    } on PlatformException {
-      return false;
-    }
+    final enabled = await Geolocator.isLocationServiceEnabled();
+    print('GPS Enabled: $enabled');
+    return enabled;
   }
 
   @override
   Future<bool> requestPermissions() async {
-    final locationStatus = await Permission.location.request();
-    if (!locationStatus.isGranted) {
-      final whenInUseStatus = await Permission.locationWhenInUse.request();
-      return whenInUseStatus.isGranted;
+    print('🔐 Solicitando permisos de ubicación...');
+    
+    // Verificar permisos actuales
+    LocationPermission permission = await Geolocator.checkPermission();
+    print('Permiso actual: $permission');
+    
+    if (permission == LocationPermission.denied) {
+      // Solicitar permisos
+      permission = await Geolocator.requestPermission();
+      print('Permiso después de solicitar: $permission');
     }
-    return locationStatus.isGranted;
+    
+    if (permission == LocationPermission.deniedForever) {
+      print('❌ Permisos denegados permanentemente');
+      return false;
+    }
+
+    if (permission == LocationPermission.denied) {
+      print('❌ Permisos denegados');
+      return false;
+    }
+
+    print('✅ Permisos concedidos');
+    return true;
   }
 }

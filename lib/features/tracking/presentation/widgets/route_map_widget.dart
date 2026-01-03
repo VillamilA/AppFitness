@@ -33,30 +33,48 @@ class _RouteMapWidgetState extends State<RouteMapWidget> {
   }
 
   Future<void> _startTracking() async {
+    print('🚀 Iniciando tracking GPS...');
+    
+    setState(() {
+      _statusMessage = 'Verificando permisos...';
+    });
+
     final hasPermission = await _dataSource.requestPermissions();
     if (!hasPermission) {
+      print('❌ Permisos denegados');
       setState(() {
-        _statusMessage = 'Permisos denegados';
+        _statusMessage = '❌ Permisos denegados - Ve a Ajustes';
       });
       return;
     }
+
+    print('✅ Permisos concedidos');
+    setState(() {
+      _statusMessage = 'Verificando GPS...';
+    });
 
     final gpsEnabled = await _dataSource.isGpsEnabled();
     if (!gpsEnabled) {
+      print('❌ GPS desactivado');
       setState(() {
-        _statusMessage = 'Activa el GPS';
+        _statusMessage = '❌ Activa el GPS en Ajustes';
       });
       return;
     }
 
+    print('✅ GPS activado, iniciando stream...');
+    setState(() {
+      _statusMessage = 'Esperando señal GPS...';
+    });
+
     _subscription = _dataSource.locationStream.listen(
       (point) {
-        print('📍 GPS: ${point.latitude}, ${point.longitude}, acc=${point.accuracy}m');
+        print('📍 GPS: ${point.latitude}, ${point.longitude}');
 
         if (_route.points.isEmpty) {
           setState(() {
             _route.addPoint(point);
-            _statusMessage = 'Tracking - ${_route.points.length} puntos';
+            _statusMessage = '✅ Tracking - ${_route.points.length} puntos';
           });
         } else {
           final lastPoint = _route.points.last;
@@ -65,7 +83,7 @@ class _RouteMapWidgetState extends State<RouteMapWidget> {
           if (distance >= 2) {
             setState(() {
               _route.addPoint(point);
-              _statusMessage = 'Tracking - ${_route.points.length} puntos';
+              _statusMessage = '✅ Tracking - ${_route.points.length} puntos';
             });
           }
         }
@@ -73,7 +91,8 @@ class _RouteMapWidgetState extends State<RouteMapWidget> {
       onError: (error) {
         print('❌ GPS Error: $error');
         setState(() {
-          _statusMessage = 'Error: $error';
+          _statusMessage = '❌ Error: $error';
+          _isTracking = false;
         });
       },
     );
